@@ -1,0 +1,19 @@
+# MERN Version
+mern/backend/node_modules
+mern/frontend/node_modules
+mern/functions/node_modules
+mern/backend/.env
+mern/frontend/.env
+mern/frontend/build
+.firebase
+*.log
+.DS_Store
+
+# Environment variables
+frontend/.env
+.env
+
+# Original PHP files (keep for reference)
+# cookies.txt
+# cookies2.txt
+node_modules
