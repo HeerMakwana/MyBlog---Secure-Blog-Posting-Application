@@ -1,0 +1,39 @@
+type User @table {
+  username: String!
+  email: String!
+  passwordHash: String!
+  createdAt: Timestamp!
+  displayName: String
+  bio: String
+  profilePictureUrl: String
+}
+
+type Post @table {
+  title: String!
+  content: String!
+  author: User!
+  published: Boolean!
+  createdAt: Timestamp!
+  updatedAt: Timestamp!
+  imageUrl: String
+  excerpt: String
+}
+
+type Tag @table {
+  name: String!
+  description: String
+}
+
+type PostTag @table(key: ["post", "tag"]) {
+  post: Post!
+  tag: Tag!
+}
+
+type Comment @table {
+  content: String!
+  author: User!
+  post: Post!
+  createdAt: Timestamp!
+  updatedAt: Timestamp!
+  parentId: UUID
+}

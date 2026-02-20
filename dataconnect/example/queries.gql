@@ -1,0 +1,23 @@
+mutation CreateNewTag($name: String!, $description: String) @auth(level: USER) {
+  tag_insert(data: {name: $name, description: $description})
+}
+
+query GetPostsByTag($tagId: UUID!) @auth(level: PUBLIC, insecureReason: "This operation is safe to expose to the public") {
+  posts(where: {tags_via_PostTag: {id: {eq: $tagId}}}) {
+    id
+    title
+    content
+  }
+}
+
+mutation UpdatePostContent($id: UUID!, $content: String!) @auth(level: USER) {
+  post_update(key: {id: $id}, data: {content: $content, updatedAt_expr: "request.time"})
+}
+
+query GetUserPosts @auth(level: USER) {
+  posts(where: {authorId: {eq_expr: "auth.uid"}}) {
+    id
+    title
+    content
+  }
+}
