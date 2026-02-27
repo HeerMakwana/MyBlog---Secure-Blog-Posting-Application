@@ -1,6 +1,7 @@
 /**
  * Authentication Routes - Secure Implementation
- * Implements: Rate limiting, input validation, audit logging, MFA with backup codes
+ * Implements: Rate limiting, input validation, audit logging, MFA with backup codes,
+ * Secure sessions, CSRF protection
  */
 
 const express = require('express');
@@ -9,7 +10,14 @@ const crypto = require('crypto');
 const User = require('../models/User');
 const { authenticate, generateToken, getJwtSecret } = require('../middleware/rbac');
 const { authRateLimiter, mfaRateLimiter, trackLoginAttempt, isAccountLocked } = require('../middleware/rateLimiter');
+const { validateCsrfToken } = require('../middleware/csrf');
+const { 
+  regenerateSession, 
+  destroySession, 
+  initializeUserSession 
+} = require('../middleware/session');
 const { logAuditEvent } = require('../utils/auditLogger');
+const { logAccountActivity } = require('../utils/accountActivity');
 const { 
   validateEmail, 
   validateUsername, 
@@ -101,7 +109,23 @@ router.post('/register', authRateLimiter, async (req, res) => {
       details: { emailVerificationRequired: securityConfig.account.emailVerificationRequired }
     });
 
-    // Generate session token
+    // Log account activity
+    await logAccountActivity({
+      userId: user._id,
+      activityType: 'LOGIN_SUCCESS',
+      req,
+      status: 'SUCCESS',
+      details: { method: 'registration' }
+    });
+
+    // Initialize secure session with regeneration
+    try {
+      await initializeUserSession(req, user);
+    } catch (sessionError) {
+      console.error('Session initialization error:', sessionError);
+    }
+
+    // Generate JWT token
     const sessionId = user.createSession(req.get('User-Agent'), req.ip);
     await user.save({ validateBeforeSave: false });
     
@@ -267,7 +291,23 @@ router.post('/login', authRateLimiter, async (req, res) => {
       }
     }
 
-    // Create session
+    // Initialize secure session with regeneration (prevents session fixation)
+    try {
+      await initializeUserSession(req, user);
+    } catch (sessionError) {
+      console.error('Session initialization error:', sessionError);
+    }
+
+    // Log account activity
+    await logAccountActivity({
+      userId: user._id,
+      activityType: 'LOGIN_SUCCESS',
+      req,
+      status: 'SUCCESS',
+      details: { method: 'password' }
+    });
+
+    // Create user session record
     const sessionId = user.createSession(req.get('User-Agent'), req.ip);
     user.lastLogin = new Date();
     await user.save({ validateBeforeSave: false });
@@ -662,16 +702,26 @@ router.post('/setup-security-questions', authenticate, async (req, res) => {
 
 /**
  * POST /api/auth/logout
- * Logout and revoke session
+ * Logout and revoke session - with proper session destruction
  */
-router.post('/logout', authenticate, async (req, res) => {
+router.post('/logout', validateCsrfToken, authenticate, async (req, res) => {
   try {
     const user = await User.findById(req.user._id).select('+sessions');
     
+    // Revoke user session from database
     if (req.tokenData?.sessionId) {
       user.revokeSession(req.tokenData.sessionId);
       await user.save({ validateBeforeSave: false });
     }
+
+    // Log account activity
+    await logAccountActivity({
+      userId: user._id,
+      activityType: 'LOGOUT',
+      req,
+      status: 'SUCCESS',
+      details: { sessionId: req.sessionID }
+    });
 
     await logAuditEvent({
       eventType: 'AUTH_LOGOUT',
@@ -682,6 +732,13 @@ router.post('/logout', authenticate, async (req, res) => {
       status: 'SUCCESS'
     });
 
+    // Destroy the express session completely
+    try {
+      await destroySession(req, res);
+    } catch (sessionError) {
+      console.error('Session destruction error:', sessionError);
+    }
+
     res.json({ success: true, message: 'Logged out successfully' });
   } catch (error) {
     res.status(500).json({ success: false, message: SAFE_ERRORS.SERVER_ERROR });
@@ -690,13 +747,22 @@ router.post('/logout', authenticate, async (req, res) => {
 
 /**
  * POST /api/auth/logout-all
- * Logout from all devices
+ * Logout from all devices - revokes all sessions
  */
-router.post('/logout-all', authenticate, async (req, res) => {
+router.post('/logout-all', validateCsrfToken, authenticate, async (req, res) => {
   try {
     const user = await User.findById(req.user._id).select('+sessions');
     user.revokeAllSessions();
     await user.save({ validateBeforeSave: false });
+
+    // Log account activity
+    await logAccountActivity({
+      userId: user._id,
+      activityType: 'SESSION_REVOKED',
+      req,
+      status: 'SUCCESS',
+      details: { action: 'all_sessions_revoked' }
+    });
 
     await logAuditEvent({
       eventType: 'SESSION_REVOKED',
@@ -707,6 +773,13 @@ router.post('/logout-all', authenticate, async (req, res) => {
       status: 'SUCCESS',
       riskLevel: 'LOW'
     });
+
+    // Destroy current express session
+    try {
+      await destroySession(req, res);
+    } catch (sessionError) {
+      console.error('Session destruction error:', sessionError);
+    }
 
     res.json({ success: true, message: 'Logged out from all devices' });
   } catch (error) {

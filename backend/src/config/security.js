@@ -12,6 +12,35 @@ module.exports = {
     algorithm: 'HS256'
   },
 
+  // Session Configuration
+  session: {
+    secret: process.env.SESSION_SECRET || 'CHANGE-THIS-SESSION-SECRET-IN-PRODUCTION',
+    name: process.env.SESSION_NAME || 'myblog_session',
+    maxAge: parseInt(process.env.SESSION_MAX_AGE, 10) || 60 * 60 * 1000, // 1 hour
+    absoluteMaxAge: 24 * 60 * 60 * 1000, // 24 hours absolute max
+    inactivityTimeout: 30 * 60 * 1000, // 30 minutes inactivity
+    maxConcurrentSessions: 5,
+    regenerateOnLogin: true, // Prevent session fixation
+    rolling: true // Reset maxAge on each request
+  },
+
+  // CSRF Configuration
+  csrf: {
+    secret: process.env.CSRF_SECRET || 'CHANGE-THIS-CSRF-SECRET-IN-PRODUCTION',
+    cookieName: 'csrf_token',
+    headerName: 'x-csrf-token',
+    tokenLength: 32,
+    rotateOnUse: process.env.CSRF_ROTATE_ON_USE === 'true'
+  },
+
+  // Cookie Configuration
+  cookie: {
+    secure: process.env.NODE_ENV === 'production' || process.env.COOKIE_SECURE === 'true',
+    httpOnly: process.env.COOKIE_HTTP_ONLY !== 'false',
+    sameSite: process.env.COOKIE_SAME_SITE || 'strict',
+    domain: process.env.COOKIE_DOMAIN || undefined
+  },
+
   // Password Requirements
   password: {
     minLength: 12,
