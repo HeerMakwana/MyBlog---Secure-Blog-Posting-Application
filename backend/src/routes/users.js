@@ -1,6 +1,6 @@
 /**
  * User Profile Routes - Secure Implementation
- * Implements: RBAC, input validation, audit logging, account activity
+ * Implements: RBAC, input validation, audit logging
  */
 
 const express = require('express');
@@ -10,7 +10,6 @@ const User = require('../models/User');
 const { authenticate, requirePermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../config/roles');
 const { logAuditEvent } = require('../utils/auditLogger');
-const { getAccountActivity, getSecuritySummary, logAccountActivity } = require('../utils/accountActivity');
 const { validateEmail, validateUsername, validatePassword, SAFE_ERRORS } = require('../utils/validation');
 
 /**
@@ -187,58 +186,6 @@ router.delete('/sessions/:sessionId', authenticate, async (req, res) => {
     res.json({ success: true, message: 'Session revoked' });
   } catch (error) {
     console.error('Revoke session error:', error.message);
-    res.status(500).json({ success: false, message: SAFE_ERRORS.SERVER_ERROR });
-  }
-});
-
-/**
- * GET /api/users/activity
- * Get account activity log for current user
- */
-router.get('/activity', authenticate, async (req, res) => {
-  try {
-    const { page = 1, limit = 20, type } = req.query;
-    
-    const options = {
-      page: parseInt(page, 10),
-      limit: Math.min(parseInt(limit, 10) || 20, 100), // Max 100 per page
-      activityTypes: type ? type.split(',') : null
-    };
-    
-    const result = await getAccountActivity(req.user._id, options);
-    
-    res.json({
-      success: true,
-      activities: result.activities,
-      pagination: result.pagination
-    });
-  } catch (error) {
-    console.error('Get activity error:', error.message);
-    res.status(500).json({ success: false, message: SAFE_ERRORS.SERVER_ERROR });
-  }
-});
-
-/**
- * GET /api/users/security-summary
- * Get security summary for current user
- */
-router.get('/security-summary', authenticate, async (req, res) => {
-  try {
-    const summary = await getSecuritySummary(req.user._id);
-    
-    // Get MFA status
-    const user = await User.findById(req.user._id).select('+totpSecret +backupCodes');
-    
-    res.json({
-      success: true,
-      security: {
-        ...summary,
-        mfaEnabled: !!user.totpSecret,
-        backupCodesAvailable: user.backupCodes?.filter(c => !c.used).length || 0
-      }
-    });
-  } catch (error) {
-    console.error('Get security summary error:', error.message);
     res.status(500).json({ success: false, message: SAFE_ERRORS.SERVER_ERROR });
   }
 });
