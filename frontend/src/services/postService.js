@@ -11,7 +11,8 @@ import {
   orderBy,
   serverTimestamp 
 } from 'firebase/firestore';
-import { db } from '../config/firebase';
+import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
+import { db, storage } from '../config/firebase';
 
 // Create slug from title
 const createSlug = (title) => {
@@ -117,15 +118,24 @@ export const getPostById = async (postId) => {
 };
 
 // Create post
-export const createPost = async (userId, title, body, imageUrl = null) => {
+export const createPost = async (userId, title, body, imageFile = null) => {
   const slug = createSlug(title);
+  
+  let imagePath = null;
+  
+  // Upload image if provided
+  if (imageFile) {
+    const imageRef = ref(storage, `posts/${Date.now()}_${imageFile.name}`);
+    await uploadBytes(imageRef, imageFile);
+    imagePath = await getDownloadURL(imageRef);
+  }
   
   const postRef = await addDoc(collection(db, 'posts'), {
     userId,
     title,
     slug,
     body,
-    imagePath: imageUrl, // Use external image URL instead of uploaded file
+    imagePath,
     createdAt: serverTimestamp(),
     updatedAt: null
   });
@@ -135,7 +145,7 @@ export const createPost = async (userId, title, body, imageUrl = null) => {
     slug,
     title,
     body,
-    imagePath: imageUrl
+    imagePath
   };
 };
 
@@ -179,6 +189,16 @@ export const deletePost = async (postId, userId, isAdmin = false) => {
   // Check ownership
   if (postData.userId !== userId && !isAdmin) {
     throw new Error('Not authorized to delete this post');
+  }
+  
+  // Delete image from storage if exists
+  if (postData.imagePath) {
+    try {
+      const imageRef = ref(storage, postData.imagePath);
+      await deleteObject(imageRef);
+    } catch (error) {
+      console.error('Error deleting image:', error);
+    }
   }
   
   await deleteDoc(doc(db, 'posts', postId));
