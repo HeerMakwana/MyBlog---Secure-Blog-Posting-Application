@@ -1,146 +1,199 @@
-const express = require('express');
+const express = require("express");
+const crypto = require("crypto");
 const router = express.Router();
-const jwt = require('jsonwebtoken');
-const User = require('../models/User');
-const { protect, generateToken, getJwtSecret } = require('../middleware/auth');
-const { generateSecret, generateOtpAuthUrl, generateQRCode, verifyTOTP, generateTOTP } = require('../utils/totp');
 
-router.post('/register', async (req, res) => {
-  try {
-    const { username, email, password } = req.body;
+const User = require("../models/User");
+const {protect, generateToken} = require("../middleware/auth");
+const {AppError, asyncHandler} = require("../utils/errors");
+const {SAFE_ERRORS} = require("../utils/safeErrors");
+const {validatePasswordPolicy} = require("../utils/passwordPolicy");
+const {authRateLimiter} = require("../middleware/rateLimiter");
 
-    const existingUser = await User.findOne({
-      $or: [{ email }, { username }]
-    });
+const captchaStore = new Map();
+const CAPTCHA_TTL_MS = 5 * 60 * 1000;
+const CAPTCHA_MAX_ATTEMPTS = 3;
 
-    if (existingUser) {
-      return res.status(400).json({
-        success: false,
-        message: 'Username or email already exists'
-      });
+const cleanupCaptchaStore = () => {
+  const now = Date.now();
+  for (const [id, challenge] of captchaStore.entries()) {
+    if (challenge.expiresAt <= now) {
+      captchaStore.delete(id);
     }
-
-    const user = await User.create({ username, email, password });
-    const token = generateToken(user._id);
-
-    res.status(201).json({
-      success: true,
-      token,
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        isAdmin: user.isAdmin
-      }
-    });
-  } catch (error) {
-    res.status(400).json({ success: false, message: error.message });
   }
+};
+
+setInterval(cleanupCaptchaStore, 60 * 1000);
+
+const createCaptchaChallenge = () => {
+  const a = Math.floor(Math.random() * 9) + 1;
+  const b = Math.floor(Math.random() * 9) + 1;
+  const operator = Math.random() < 0.5 ? "+" : "-";
+
+  const answer = operator === "+" ? a + b : a - b;
+  const captchaId = crypto.randomBytes(16).toString("hex");
+
+  captchaStore.set(captchaId, {
+    answer,
+    attempts: 0,
+    expiresAt: Date.now() + CAPTCHA_TTL_MS,
+  });
+
+  return {
+    captchaId,
+    question: `${a} ${operator} ${b} = ?`,
+  };
+};
+
+const verifyCaptchaChallenge = (captchaId, captchaAnswer) => {
+  const challenge = captchaStore.get(captchaId);
+  if (!challenge) {
+    return {valid: false, message: "Captcha expired. Please try again."};
+  }
+
+  if (challenge.expiresAt <= Date.now()) {
+    captchaStore.delete(captchaId);
+    return {valid: false, message: "Captcha expired. Please try again."};
+  }
+
+  challenge.attempts += 1;
+
+  const numericAnswer = Number(captchaAnswer);
+  const isValid = Number.isFinite(numericAnswer) &&
+    numericAnswer === challenge.answer;
+
+  if (isValid) {
+    captchaStore.delete(captchaId);
+    return {valid: true};
+  }
+
+  if (challenge.attempts >= CAPTCHA_MAX_ATTEMPTS) {
+    captchaStore.delete(captchaId);
+    return {valid: false, message: "Captcha expired. Please try again."};
+  }
+
+  return {valid: false, message: "Incorrect captcha answer"};
+};
+
+router.get("/captcha", (req, res) => {
+  const challenge = createCaptchaChallenge();
+  res.json({success: true, ...challenge});
 });
 
-router.post('/login', async (req, res) => {
-  try {
-    const { username, password } = req.body;
+router.post("/register", authRateLimiter, asyncHandler(async (req, res) => {
+  const {username, email, password, captchaId, captchaAnswer} = req.body;
 
-    if (!username || !password) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please provide username and password'
-      });
-    }
-
-    const user = await User.findOne({ username }).select('+password +totpSecret');
-
-    if (!user || !(await user.comparePassword(password))) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid credentials'
-      });
-    }
-
-    if (user.totpSecret) {
-      const tempToken = generateToken(user._id, true);
-      return res.json({
-        success: true,
-        mfaRequired: true,
-        tempToken,
-        userId: user._id
-      });
-    }
-
-    const token = generateToken(user._id);
-
-    res.json({
-      success: true,
-      token,
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        isAdmin: user.isAdmin
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+  if (!username || !email || !password) {
+    throw new AppError(SAFE_ERRORS.VALIDATION_FAILED, 400, "VALIDATION_ERROR");
   }
-});
 
-router.post('/verify-mfa', async (req, res) => {
-  try {
-    const { tempToken, code } = req.body;
-
-    if (!tempToken || !code) {
-      return res.status(400).json({
-        success: false,
-        message: 'Token and code are required'
-      });
-    }
-
-    let decoded;
-    try {
-      decoded = jwt.verify(tempToken, getJwtSecret());
-    } catch (err) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid or expired token'
-      });
-    }
-
-    if (!decoded.mfaPending) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid MFA verification request'
-      });
-    }
-
-    const user = await User.findById(decoded.id).select('+totpSecret');
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-
-    if (!verifyTOTP(code, user.totpSecret)) {
-      return res.status(401).json({ success: false, message: 'Invalid MFA code' });
-    }
-
-    const token = generateToken(user._id);
-
-    res.json({
-      success: true,
-      token,
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        isAdmin: user.isAdmin
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+  if (!captchaId || captchaAnswer === undefined || captchaAnswer === null) {
+    throw new AppError("Captcha is required", 400, "CAPTCHA_REQUIRED");
   }
-});
 
-router.get('/me', protect, async (req, res) => {
-  const user = await User.findById(req.user._id).select('+totpSecret');
+  const captchaResult = verifyCaptchaChallenge(captchaId, captchaAnswer);
+  if (!captchaResult.valid) {
+    throw new AppError(captchaResult.message, 400, "CAPTCHA_INVALID");
+  }
+
+  const passwordPolicyResult = validatePasswordPolicy(password);
+  if (!passwordPolicyResult.valid) {
+    throw new AppError(SAFE_ERRORS.VALIDATION_FAILED, 400, "WEAK_PASSWORD");
+  }
+
+  const existingUser = await User.findOne({
+    $or: [{email}, {username}],
+  });
+
+  if (existingUser) {
+    throw new AppError(SAFE_ERRORS.REGISTRATION_FAILED, 400, "REGISTRATION_FAILED");
+  }
+
+  const user = await User.create({username, email, password});
+  const token = generateToken(user._id);
+
+  res.status(201).json({
+    success: true,
+    token,
+    user: {
+      id: user._id,
+      username: user.username,
+      email: user.email,
+      isAdmin: user.isAdmin,
+    },
+  });
+}));
+
+router.post("/login", authRateLimiter, asyncHandler(async (req, res) => {
+  const {username, password, captchaId, captchaAnswer} = req.body;
+
+  if (!username || !password) {
+    throw new AppError(SAFE_ERRORS.INVALID_CREDENTIALS, 401, "INVALID_CREDENTIALS");
+  }
+
+  if (!captchaId || captchaAnswer === undefined || captchaAnswer === null) {
+    throw new AppError("Captcha is required", 400, "CAPTCHA_REQUIRED");
+  }
+
+  const captchaResult = verifyCaptchaChallenge(captchaId, captchaAnswer);
+  if (!captchaResult.valid) {
+    throw new AppError(captchaResult.message, 400, "CAPTCHA_INVALID");
+  }
+
+  const user = await User.findOne({username})
+      .select("+password +failedLoginAttempts +lockedUntil");
+
+  await new Promise((resolve) => setTimeout(resolve, 75));
+
+  if (user && user.isAccountLocked()) {
+    throw new AppError(SAFE_ERRORS.ACCOUNT_LOCKED, 423, "ACCOUNT_LOCKED");
+  }
+
+  if (!user) {
+    throw new AppError(SAFE_ERRORS.INVALID_CREDENTIALS, 401, "INVALID_CREDENTIALS");
+  }
+
+  const passwordMatches = await user.comparePassword(password);
+  if (!passwordMatches) {
+    user.recordFailedLogin(5, 15);
+    await user.save({validateBeforeSave: false});
+
+    if (user.isAccountLocked()) {
+      throw new AppError(SAFE_ERRORS.ACCOUNT_LOCKED, 423, "ACCOUNT_LOCKED");
+    }
+
+    throw new AppError(SAFE_ERRORS.INVALID_CREDENTIALS, 401, "INVALID_CREDENTIALS");
+  }
+
+  user.clearFailedLogins();
+  await user.save({validateBeforeSave: false});
+
+  const token = generateToken(user._id);
+
+  return res.json({
+    success: true,
+    token,
+    user: {
+      id: user._id,
+      username: user.username,
+      email: user.email,
+      isAdmin: user.isAdmin,
+    },
+  });
+}));
+
+router.post("/verify-mfa", asyncHandler(async (req, res) => {
+  res.status(410).json({
+    success: false,
+    message: "MFA has been removed from this application",
+  });
+}));
+
+router.get("/me", protect, asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user._id);
+  if (!user) {
+    throw new AppError(SAFE_ERRORS.UNAUTHORIZED, 401, "UNAUTHORIZED");
+  }
+
   res.json({
     success: true,
     user: {
@@ -148,74 +201,31 @@ router.get('/me', protect, async (req, res) => {
       username: user.username,
       email: user.email,
       isAdmin: user.isAdmin,
-      mfaEnabled: !!user.totpSecret,
-      createdAt: user.createdAt
-    }
+      mfaEnabled: false,
+      createdAt: user.createdAt,
+    },
   });
-});
+}));
 
-router.post('/enable-mfa', protect, async (req, res) => {
-  try {
-    const user = await User.findById(req.user._id).select('+totpSecret');
+router.post("/enable-mfa", protect, asyncHandler(async (req, res) => {
+  res.status(410).json({
+    success: false,
+    message: "MFA has been removed from this application",
+  });
+}));
 
-    if (user.totpSecret) {
-      return res.status(400).json({ success: false, message: 'MFA is already enabled' });
-    }
+router.post("/confirm-mfa", protect, asyncHandler(async (req, res) => {
+  res.status(410).json({
+    success: false,
+    message: "MFA has been removed from this application",
+  });
+}));
 
-    const secret = generateSecret();
-    const otpAuthUrl = generateOtpAuthUrl(user.username, secret);
-    const qrCode = await generateQRCode(otpAuthUrl);
-
-    res.json({
-      success: true,
-      secret,
-      qrCode,
-      currentCode: process.env.NODE_ENV === 'development' ? generateTOTP(secret) : undefined
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-router.post('/confirm-mfa', protect, async (req, res) => {
-  try {
-    const { secret, code } = req.body;
-
-    if (!secret || !code) {
-      return res.status(400).json({ success: false, message: 'Secret and code are required' });
-    }
-
-    if (!verifyTOTP(code, secret)) {
-      return res.status(400).json({ success: false, message: 'Invalid code. Please try again.' });
-    }
-
-    await User.findByIdAndUpdate(req.user._id, { totpSecret: secret });
-
-    res.json({ success: true, message: 'MFA enabled successfully' });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-router.post('/disable-mfa', protect, async (req, res) => {
-  try {
-    const { code } = req.body;
-    const user = await User.findById(req.user._id).select('+totpSecret');
-
-    if (!user.totpSecret) {
-      return res.status(400).json({ success: false, message: 'MFA is not enabled' });
-    }
-
-    if (!verifyTOTP(code, user.totpSecret)) {
-      return res.status(400).json({ success: false, message: 'Invalid code' });
-    }
-
-    await User.findByIdAndUpdate(req.user._id, { totpSecret: null });
-
-    res.json({ success: true, message: 'MFA disabled successfully' });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
+router.post("/disable-mfa", protect, asyncHandler(async (req, res) => {
+  res.status(410).json({
+    success: false,
+    message: "MFA has been removed from this application",
+  });
+}));
 
 module.exports = router;

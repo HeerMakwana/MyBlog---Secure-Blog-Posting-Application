@@ -8,7 +8,6 @@ const Dashboard = () => {
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [mfaEnabled, setMfaEnabled] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -16,12 +15,8 @@ const Dashboard = () => {
 
   const fetchData = async () => {
     try {
-      const [postsRes, profileRes] = await Promise.all([
-        api.get('/posts/my'),
-        api.get('/users/profile')
-      ]);
+      const postsRes = await api.get('/posts/my');
       setPosts(postsRes.data.posts);
-      setMfaEnabled(profileRes.data.user.mfaEnabled);
     } catch (err) {
       setError('Failed to load data');
     } finally {
@@ -84,37 +79,17 @@ const Dashboard = () => {
           Security Settings
         </h3>
         <div className="security-panel" style={{ marginTop: '1rem' }}>
-          {mfaEnabled ? (
-            <>
-              <div className="security-status">
-                <div className="status-icon enabled">✓</div>
-                <div>
-                  <strong style={{ color: '#065f46', fontSize: '1.1rem' }}>
-                    Multi-Factor Authentication is enabled
-                  </strong>
-                  <p style={{ color: '#059669', fontSize: '0.95rem', margin: '0.5rem 0 0 0' }}>
-                    Your account is protected with an extra layer of security.
-                  </p>
-                </div>
-              </div>
-              <Link to="/disable-mfa" className="btn btn-secondary">Disable MFA</Link>
-            </>
-          ) : (
-            <>
-              <div className="security-status">
-                <div className="status-icon disabled">⚠</div>
-                <div>
-                  <strong style={{ color: '#92400e', fontSize: '1.1rem' }}>
-                    Multi-Factor Authentication is not enabled
-                  </strong>
-                  <p style={{ color: '#d97706', fontSize: '0.95rem', margin: '0.5rem 0 0 0' }}>
-                    Add an extra layer of security to protect your account.
-                  </p>
-                </div>
-              </div>
-              <Link to="/enable-mfa" className="btn">Enable MFA Now</Link>
-            </>
-          )}
+          <div className="security-status">
+            <div className="status-icon enabled">✓</div>
+            <div>
+              <strong style={{ color: '#065f46', fontSize: '1.1rem' }}>
+                Local captcha protection enabled
+              </strong>
+              <p style={{ color: '#059669', fontSize: '0.95rem', margin: '0.5rem 0 0 0' }}>
+                Login and registration now require a local captcha challenge.
+              </p>
+            </div>
+          </div>
         </div>
       </div>
 

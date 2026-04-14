@@ -1,248 +1,171 @@
-# MyBlog - MERN Stack with Firebase Deployment
+# MyBlog Secure Blog Application
 
-A secure blogging platform converted from PHP to MERN stack (MongoDB, Express, React, Node.js) with Firebase deployment.
+MyBlog is a full-stack blog platform with local CAPTCHA authentication hardening, RBAC, and Firebase deployment support.
 
-## Features
+## What You Can Deploy
 
-- 🔐 **User Authentication** - Register, Login with JWT tokens
-- 🔑 **Multi-Factor Authentication (MFA)** - TOTP-based 2FA using authenticator apps
-- 📝 **Blog Posts** - Create, Read, Update, Delete posts
-- 👤 **User Profiles** - Update profile and change password
-- 👑 **Admin Panel** - Manage users and posts (admin only)
-- 🚀 **Firebase Deployment** - Hosted on Firebase with Cloud Functions
+- frontend/ React app (Firebase Hosting)
+- functions/ API (Firebase Functions, route prefix /api)
+- backend/ standalone local API (optional for local dev)
 
-## Project Structure
-
-```
-mern/
-├── backend/              # Express.js API (for local development)
-│   ├── src/
-│   │   ├── index.js      # Server entry point
-│   │   ├── models/       # Mongoose models
-│   │   ├── routes/       # API routes
-│   │   ├── middleware/   # Auth middleware
-│   │   └── utils/        # TOTP utilities
-│   └── package.json
-│
-├── frontend/             # React application
-│   ├── public/
-│   ├── src/
-│   │   ├── components/   # Reusable components
-│   │   ├── pages/        # Page components
-│   │   ├── context/      # React context (Auth)
-│   │   └── services/     # API service
-│   └── package.json
-│
-├── functions/            # Firebase Cloud Functions
-│   ├── models/
-│   ├── routes/
-│   ├── middleware/
-│   ├── utils/
-│   └── index.js
-│
-├── firebase.json         # Firebase configuration
-└── .firebaserc           # Firebase project settings
-```
+Important: Firebase deployment uses functions/ as the API. The backend/ service is for local/standalone use.
 
 ## Prerequisites
 
-- Node.js 18 or later
-- MongoDB Atlas account (or local MongoDB)
-- Firebase account with a project created
-- Firebase CLI (`npm install -g firebase-tools`)
+- Node.js 18.x
+- npm 9+
+- Firebase CLI installed globally
+- A Firebase project
+- MongoDB connection string
 
-## Local Development Setup
+Install Firebase CLI:
 
-### 1. Backend Setup
+npm i -g firebase-tools
 
-```bash
-cd mern\backend
+## 1. Clone And Install
 
-# Copy environment variables
-copy .env.example .env
+From a fresh pull:
 
-# Edit .env with your MongoDB URI and JWT secret
-# MONGODB_URI=mongodb+srv://...
-# JWT_SECRET=your-secret-key
-
-# Install dependencies
+git clone https://github.com/HeerMakwana/MyBlog.git
+cd MyBlog
 npm install
+npm run install:all
+cd functions && npm install && cd ..
 
-# Start development server
+## 2. Configure Environment Files
+
+Create these local files before running or deploying.
+
+### backend/.env (local backend only)
+
+Copy backend/.env.example to backend/.env and fill required values.
+
+Minimum values to run local backend:
+
+- NODE_ENV=development
+- PORT=5000
+- MONGODB_URI=your MongoDB URI
+- JWT_SECRET=64+ char random string
+- SESSION_SECRET=64+ char random string
+- CSRF_SECRET=32+ char random string
+- ENCRYPTION_KEY=64 hex chars
+- ALLOWED_ORIGINS=http://localhost:3000
+- ADMIN_EMAIL=valid email (if ADMIN_USERNAME is set)
+- ADMIN_PASSWORD=12+ chars (if ADMIN_USERNAME is set)
+
+Generate secure values quickly:
+
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+
+### frontend/.env
+
+Copy frontend/.env.example to frontend/.env.
+
+For local backend development:
+
+- REACT_APP_API_URL=http://localhost:5000/api
+
+For Firebase Hosting + Functions deployment:
+
+- REACT_APP_API_URL=/api
+
+### functions/.env (Firebase Functions runtime)
+
+Create functions/.env (template provided in functions/.env.example) with:
+
+- NODE_ENV=production
+- MONGODB_URI=your MongoDB URI
+- JWT_SECRET=64+ char random string
+- ALLOWED_ORIGINS=https://your-frontend-domain
+
+If you use multiple Firebase projects, create per-project files:
+
+- functions/.env.dev
+- functions/.env.prod
+
+and select the project with firebase use before deploy.
+
+## 3. Run Locally
+
+### Option A: Local backend + React (recommended for development)
+
+At repository root:
+
 npm run dev
-```
 
-### 2. Frontend Setup
+App: http://localhost:3000
+API: http://localhost:5000/api
 
-```bash
-cd mern/frontend
+### Option B: Firebase Functions emulator
 
-# Install dependencies
-npm install
+In functions/:
 
-# Start React development server
-npm start
-```
+npm run serve
 
-The frontend will run on `http://localhost:3000` and proxy API requests to `http://localhost:5000`.
+## 4. Validate Before Deploy
 
-## Firebase Deployment
+From root:
 
-### 1. Install Firebase CLI
+- npm run build
 
-```bash
-npm install -g firebase-tools
-```
+In functions/:
 
-### 2. Login to Firebase
+- npm run lint
+- npm run test:security
+- npm run test:password-security
 
-```bash
+In backend/ (optional but recommended):
+
+- npm run test:security
+- npm run audit
+
+## 5. Deploy To Firebase
+
+1. Authenticate and select project:
+
 firebase login
-```
+firebase use YOUR_PROJECT_ID
 
-### 3. Initialize Firebase Project
+2. Build frontend:
 
-Edit `.firebaserc` and replace `your-firebase-project-id` with your actual Firebase project ID.
-
-### 4. Configure Environment Variables
-
-Set MongoDB URI and JWT secret for Firebase Functions:
-
-```bash
-firebase functions:config:set mongodb.uri="your-mongodb-uri" jwt.secret="your-jwt-secret"
-```
-
-### 5. Build Frontend
-
-```bash
-cd mern/frontend
 npm run build
-```
 
-### 6. Deploy to Firebase
+3. Deploy Hosting + Functions:
 
-```bash
-cd mern
-
-# Deploy functions only
-firebase deploy --only functions
-
-# Deploy hosting only
-firebase deploy --only hosting
-
-# Deploy everything
 firebase deploy
-```
 
-## Environment Variables
+The firebase.json rewrite routes /api/** to the api function and all other routes to frontend/index.html.
 
-### Backend (.env)
+## 6. Post-Deploy Verification
 
-| Variable | Description |
-|----------|-------------|
-| `MONGODB_URI` | MongoDB connection string |
-| `JWT_SECRET` | Secret key for JWT tokens |
-| `JWT_EXPIRES_IN` | Token expiration (default: 7d) |
-| `PORT` | Server port (default: 5000) |
-| `FRONTEND_URL` | Frontend URL for CORS |
-| `NODE_ENV` | Environment (development/production) |
+After deployment, verify:
 
-### Frontend
+- GET /api/health (backend local) or /health (functions direct)
+- Registration requires CAPTCHA
+- Login requires CAPTCHA
+- Protected routes reject missing/invalid token
+- Admin routes deny non-admin users
 
-Create `.env` in frontend directory if needed:
+## Common Deployment Issues
 
-| Variable | Description |
-|----------|-------------|
-| `REACT_APP_API_URL` | API URL (empty for same-origin) |
+- Functions fail to connect to DB:
+  Check functions/.env has MONGODB_URI and deploy again.
 
-## API Endpoints
+- CORS blocked:
+  Ensure ALLOWED_ORIGINS exactly matches frontend domain, including protocol.
 
-### Authentication
+- Frontend cannot call API:
+  Ensure REACT_APP_API_URL=/api for Firebase Hosting deployment.
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/auth/register` | Register new user |
-| POST | `/api/auth/login` | Login user |
-| POST | `/api/auth/verify-mfa` | Verify MFA code |
-| GET | `/api/auth/me` | Get current user |
-| POST | `/api/auth/enable-mfa` | Generate MFA secret |
-| POST | `/api/auth/confirm-mfa` | Confirm MFA setup |
-| POST | `/api/auth/disable-mfa` | Disable MFA |
+- Security validator fails local backend startup:
+  Ensure backend/.env includes valid ADMIN_EMAIL and strong secrets.
 
-### Posts
+## Security Notes
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/posts` | Get all posts |
-| GET | `/api/posts/my` | Get user's posts |
-| GET | `/api/posts/:slug` | Get post by slug |
-| POST | `/api/posts` | Create post |
-| PUT | `/api/posts/:id` | Update post |
-| DELETE | `/api/posts/:id` | Delete post |
-
-### Users
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/users/profile` | Get profile |
-| PUT | `/api/users/profile` | Update profile |
-
-### Admin (requires admin role)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/admin/users` | Get all users |
-| DELETE | `/api/admin/users/:id` | Delete user |
-| GET | `/api/admin/posts` | Get all posts |
-| DELETE | `/api/admin/posts/:id` | Delete any post |
-| GET | `/api/admin/stats` | Get dashboard stats |
-
-## Creating an Admin User
-
-To create an admin user, you can either:
-
-1. **Using MongoDB Compass/Atlas:**
-   - Find the user document
-   - Set `isAdmin: true`
-
-2. **Using a script:**
-   ```javascript
-   const User = require('./models/User');
-   await User.findOneAndUpdate(
-     { username: 'admin' },
-     { isAdmin: true }
-   );
-   ```
-
-## Security Features
-
-- **Password Hashing** - bcrypt with 12 rounds
-- **JWT Authentication** - Secure token-based auth
-- **MFA/TOTP** - Time-based one-time passwords
-- **Input Validation** - Server-side validation
-- **CORS Protection** - Configured for specific origins
-- **XSS Protection** - React's built-in escaping
-
-## Tech Stack
-
-### Backend
-- Express.js - Web framework
-- MongoDB/Mongoose - Database
-- JWT - Authentication
-- otplib - TOTP generation/verification
-- bcryptjs - Password hashing
-
-### Frontend
-- React 18 - UI library
-- React Router 6 - Client-side routing
-- Axios - HTTP client
-- Context API - State management
-
-### Deployment
-- Firebase Hosting - Static file hosting
-- Firebase Functions - Serverless backend
-- MongoDB Atlas - Cloud database
+- MFA endpoints are deprecated and return 410 Gone.
+- Local CAPTCHA endpoint: GET /api/auth/captcha.
+- Never commit secrets (.env files are gitignored).
 
 ## License
 
-MIT License
+MIT

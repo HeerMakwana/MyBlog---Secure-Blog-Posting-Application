@@ -17,9 +17,6 @@ import Profile from './pages/Profile';
 import CreatePost from './pages/CreatePost';
 import EditPost from './pages/EditPost';
 import ViewPost from './pages/ViewPost';
-import EnableMFA from './pages/EnableMFA';
-import DisableMFA from './pages/DisableMFA';
-import MFAVerify from './pages/MFAVerify';
 import Admin from './pages/Admin';
 
 function App() {
@@ -51,7 +48,6 @@ function App() {
             <Route path="/" element={<Home />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
-            <Route path="/mfa-verify" element={<MFAVerify />} />
             <Route path="/post/:slug" element={<ViewPost />} />
             
             {/* Protected Routes */}
@@ -66,12 +62,6 @@ function App() {
             } />
             <Route path="/edit-post/:id" element={
               <PrivateRoute><EditPost /></PrivateRoute>
-            } />
-            <Route path="/enable-mfa" element={
-              <PrivateRoute><EnableMFA /></PrivateRoute>
-            } />
-            <Route path="/disable-mfa" element={
-              <PrivateRoute><DisableMFA /></PrivateRoute>
             } />
             
             {/* Admin Routes */}

@@ -29,6 +29,16 @@ const userSchema = new mongoose.Schema({
     default: null,
     select: false
   },
+  failedLoginAttempts: {
+    type: Number,
+    default: 0,
+    select: false,
+  },
+  lockedUntil: {
+    type: Date,
+    default: null,
+    select: false,
+  },
   isAdmin: {
     type: Boolean,
     default: false
@@ -47,6 +57,24 @@ userSchema.pre('save', async function(next) {
 
 userSchema.methods.comparePassword = async function(candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
+};
+
+userSchema.methods.isAccountLocked = function() {
+  return !!(this.lockedUntil && this.lockedUntil.getTime() > Date.now());
+};
+
+userSchema.methods.recordFailedLogin = function(maxAttempts = 5, lockMinutes = 15) {
+  this.failedLoginAttempts += 1;
+  if (this.failedLoginAttempts >= maxAttempts) {
+    this.lockedUntil = new Date(Date.now() + lockMinutes * 60 * 1000);
+    return true;
+  }
+  return false;
+};
+
+userSchema.methods.clearFailedLogins = function() {
+  this.failedLoginAttempts = 0;
+  this.lockedUntil = null;
 };
 
 userSchema.methods.hasMFA = function() {

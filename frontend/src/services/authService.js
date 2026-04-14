@@ -145,25 +145,3 @@ export const updateUserProfile = async (uid, data) => {
   return getCurrentUser(uid);
 };
 
-// Enable MFA
-export const enableMFA = async (uid, secret) => {
-  await updateDoc(doc(db, 'users', uid), {
-    totpSecret: secret,
-    mfaEnabled: true
-  });
-};
-
-// Disable MFA
-export const disableMFA = async (uid) => {
-  await updateDoc(doc(db, 'users', uid), {
-    totpSecret: null,
-    mfaEnabled: false
-  });
-};
-
-// Get user's TOTP secret
-export const getTotpSecret = async (uid) => {
-  const userDoc = await getDoc(doc(db, 'users', uid));
-  if (!userDoc.exists()) return null;
-  return userDoc.data().totpSecret;
-};

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import api from '../services/api';
+import api, { initCsrfToken } from '../services/api';
 
 const AuthContext = createContext(null);
 
@@ -14,12 +14,17 @@ export const useAuth = () => {
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [mfaRequired, setMfaRequired] = useState(false);
-  const [tempToken, setTempToken] = useState(null);
 
   useEffect(() => {
-    checkAuth();
+    initApp();
   }, []);
+
+  const initApp = async () => {
+    // Initialize CSRF token first
+    await initCsrfToken();
+    // Then check authentication
+    await checkAuth();
+  };
 
   const checkAuth = async () => {
     const token = localStorage.getItem('token');
@@ -34,31 +39,27 @@ export const AuthProvider = ({ children }) => {
     setLoading(false);
   };
 
-  const login = async (username, password) => {
-    const response = await api.post('/auth/login', { username, password });
-    
-    if (response.data.mfaRequired) {
-      setMfaRequired(true);
-      setTempToken(response.data.tempToken);
-      return { mfaRequired: true };
-    }
+  const login = async (username, password, captchaId, captchaAnswer) => {
+    const response = await api.post('/auth/login', {
+      username,
+      password,
+      captchaId,
+      captchaAnswer
+    });
 
     localStorage.setItem('token', response.data.token);
     setUser(response.data.user);
     return { success: true };
   };
 
-  const verifyMFA = async (code) => {
-    const response = await api.post('/auth/verify-mfa', { tempToken, code });
-    localStorage.setItem('token', response.data.token);
-    setUser(response.data.user);
-    setMfaRequired(false);
-    setTempToken(null);
-    return { success: true };
-  };
-
-  const register = async (username, email, password) => {
-    const response = await api.post('/auth/register', { username, email, password });
+  const register = async (username, email, password, captchaId, captchaAnswer) => {
+    const response = await api.post('/auth/register', {
+      username,
+      email,
+      password,
+      captchaId,
+      captchaAnswer
+    });
     localStorage.setItem('token', response.data.token);
     setUser(response.data.user);
     return { success: true };
@@ -67,8 +68,6 @@ export const AuthProvider = ({ children }) => {
   const logout = () => {
     localStorage.removeItem('token');
     setUser(null);
-    setMfaRequired(false);
-    setTempToken(null);
   };
 
   const updateUser = (userData) => {
@@ -78,9 +77,7 @@ export const AuthProvider = ({ children }) => {
   const value = {
     user,
     loading,
-    mfaRequired,
     login,
-    verifyMFA,
     register,
     logout,
     updateUser,

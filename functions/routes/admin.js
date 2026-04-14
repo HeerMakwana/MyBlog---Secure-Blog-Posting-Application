@@ -1,93 +1,75 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const User = require('../models/User');
-const Post = require('../models/Post');
-const { protect, adminOnly } = require('../middleware/auth');
+
+const User = require("../models/User");
+const Post = require("../models/Post");
+const {protect, adminOnly} = require("../middleware/auth");
+const {AppError, asyncHandler} = require("../utils/errors");
+const {SAFE_ERRORS} = require("../utils/safeErrors");
 
 router.use(protect, adminOnly);
 
-router.get('/users', async (req, res) => {
-  try {
-    const users = await User.find()
-      .select('-password -totpSecret')
-      .sort({ createdAt: -1 });
+router.get("/users", asyncHandler(async (req, res) => {
+  const users = await User.find()
+      .select("-password -totpSecret")
+      .sort({createdAt: -1});
 
-    res.json({ success: true, count: users.length, users });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+  res.json({success: true, count: users.length, users});
+}));
+
+router.delete("/users/:id", asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+
+  if (!user) {
+    throw new AppError(SAFE_ERRORS.NOT_FOUND, 404, "NOT_FOUND");
   }
-});
 
-router.delete('/users/:id', async (req, res) => {
-  try {
-    const user = await User.findById(req.params.id);
-
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-
-    if (user._id.toString() === req.user._id.toString()) {
-      return res.status(400).json({ success: false, message: 'Cannot delete your own account' });
-    }
-
-    await Post.deleteMany({ user: user._id });
-    await user.deleteOne();
-
-    res.json({ success: true, message: 'User and their posts deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+  if (user._id.toString() === req.user._id.toString()) {
+    throw new AppError(SAFE_ERRORS.FORBIDDEN, 403, "FORBIDDEN");
   }
-});
 
-router.get('/posts', async (req, res) => {
-  try {
-    const posts = await Post.find()
-      .populate('user', 'username')
-      .sort({ createdAt: -1 });
+  await Post.deleteMany({user: user._id});
+  await user.deleteOne();
 
-    res.json({ success: true, count: posts.length, posts });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+  res.json({success: true, message: "User and posts deleted successfully"});
+}));
+
+router.get("/posts", asyncHandler(async (req, res) => {
+  const posts = await Post.find()
+      .populate("user", "username")
+      .sort({createdAt: -1});
+
+  res.json({success: true, count: posts.length, posts});
+}));
+
+router.delete("/posts/:id", asyncHandler(async (req, res) => {
+  const post = await Post.findById(req.params.id);
+
+  if (!post) {
+    throw new AppError(SAFE_ERRORS.NOT_FOUND, 404, "NOT_FOUND");
   }
-});
 
-router.delete('/posts/:id', async (req, res) => {
-  try {
-    const post = await Post.findById(req.params.id);
+  await post.deleteOne();
+  res.json({success: true, message: "Post deleted successfully"});
+}));
 
-    if (!post) {
-      return res.status(404).json({ success: false, message: 'Post not found' });
-    }
+router.get("/stats", asyncHandler(async (req, res) => {
+  const [userCount, postCount, recentUsers, recentPosts] = await Promise.all([
+    User.countDocuments(),
+    Post.countDocuments(),
+    User.find().select("-password -totpSecret").sort({createdAt: -1}).limit(5),
+    Post.find().populate("user", "username").sort({createdAt: -1}).limit(5),
+  ]);
 
-    await post.deleteOne();
-
-    res.json({ success: true, message: 'Post deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-router.get('/stats', async (req, res) => {
-  try {
-    const [userCount, postCount, recentUsers, recentPosts] = await Promise.all([
-      User.countDocuments(),
-      Post.countDocuments(),
-      User.find().select('-password -totpSecret').sort({ createdAt: -1 }).limit(5),
-      Post.find().populate('user', 'username').sort({ createdAt: -1 }).limit(5)
-    ]);
-
-    res.json({
-      success: true,
-      stats: {
-        totalUsers: userCount,
-        totalPosts: postCount,
-        recentUsers,
-        recentPosts
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
+  res.json({
+    success: true,
+    stats: {
+      totalUsers: userCount,
+      totalPosts: postCount,
+      recentUsers,
+      recentPosts,
+    },
+  });
+}));
 
 module.exports = router;

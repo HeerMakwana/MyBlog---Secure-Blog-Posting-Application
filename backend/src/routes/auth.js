@@ -8,17 +8,14 @@ const router = express.Router();
 const crypto = require('crypto');
 const User = require('../models/User');
 const { authenticate, generateToken, getJwtSecret } = require('../middleware/rbac');
-const { authRateLimiter, mfaRateLimiter, trackLoginAttempt, isAccountLocked } = require('../middleware/rateLimiter');
+const { authRateLimiter, trackLoginAttempt, isAccountLocked } = require('../middleware/rateLimiter');
 const { logAuditEvent } = require('../utils/auditLogger');
 const { 
   validateEmail, 
   validateUsername, 
   validatePassword, 
-  validateTOTPCode,
-  validateBackupCode,
   SAFE_ERRORS 
 } = require('../utils/validation');
-const { generateSecret, generateOtpAuthUrl, generateQRCode, verifyTOTP, generateTOTP } = require('../utils/totp');
 const { ROLES } = require('../config/roles');
 const securityConfig = require('../config/security');
 
@@ -34,13 +31,98 @@ const SECURITY_QUESTIONS = [
   { id: 8, question: "What street did you grow up on?" }
 ];
 
+const captchaStore = new Map();
+const CAPTCHA_TTL_MS = 5 * 60 * 1000;
+const CAPTCHA_MAX_ATTEMPTS = 3;
+
+const cleanupCaptchaStore = () => {
+  const now = Date.now();
+  for (const [id, challenge] of captchaStore.entries()) {
+    if (challenge.expiresAt <= now) {
+      captchaStore.delete(id);
+    }
+  }
+};
+
+setInterval(cleanupCaptchaStore, 60 * 1000);
+
+const createCaptchaChallenge = () => {
+  const a = Math.floor(Math.random() * 9) + 1;
+  const b = Math.floor(Math.random() * 9) + 1;
+  const operator = Math.random() < 0.5 ? '+' : '-';
+
+  const answer = operator === '+' ? a + b : a - b;
+  const captchaId = crypto.randomBytes(16).toString('hex');
+
+  captchaStore.set(captchaId, {
+    answer,
+    attempts: 0,
+    expiresAt: Date.now() + CAPTCHA_TTL_MS
+  });
+
+  return {
+    captchaId,
+    question: `${a} ${operator} ${b} = ?`
+  };
+};
+
+const verifyCaptchaChallenge = (captchaId, captchaAnswer) => {
+  const challenge = captchaStore.get(captchaId);
+  if (!challenge) {
+    return { valid: false, message: 'Captcha expired. Please try again.' };
+  }
+
+  if (challenge.expiresAt <= Date.now()) {
+    captchaStore.delete(captchaId);
+    return { valid: false, message: 'Captcha expired. Please try again.' };
+  }
+
+  challenge.attempts += 1;
+
+  const numericAnswer = Number(captchaAnswer);
+  const isValid = Number.isFinite(numericAnswer) &&
+    numericAnswer === challenge.answer;
+
+  if (isValid) {
+    captchaStore.delete(captchaId);
+    return { valid: true };
+  }
+
+  if (challenge.attempts >= CAPTCHA_MAX_ATTEMPTS) {
+    captchaStore.delete(captchaId);
+    return { valid: false, message: 'Captcha expired. Please try again.' };
+  }
+
+  return { valid: false, message: 'Incorrect captcha answer' };
+};
+
+router.get('/captcha', (req, res) => {
+  const challenge = createCaptchaChallenge();
+  res.json({ success: true, ...challenge });
+});
+
 /**
  * POST /api/auth/register
  * Register a new user with email verification
  */
 router.post('/register', authRateLimiter, async (req, res) => {
   try {
-    const { username, email, password } = req.body;
+    const { username, email, password, captchaId, captchaAnswer } = req.body;
+
+    if (!captchaId || captchaAnswer === undefined || captchaAnswer === null) {
+      return res.status(400).json({
+        success: false,
+        message: 'Captcha is required'
+      });
+    }
+
+    const captchaResult = verifyCaptchaChallenge(captchaId, captchaAnswer);
+    if (!captchaResult.valid) {
+      return res.status(400).json({
+        success: false,
+        message: captchaResult.message
+      });
+    }
 
     // Input validation
     const usernameResult = validateUsername(username);
@@ -125,7 +207,22 @@ router.post('/register', authRateLimiter, async (req, res) => {
  */
 router.post('/login', authRateLimiter, async (req, res) => {
   try {
-    const { username, password, deviceId, deviceFingerprint, trustDevice } = req.body;
+    const { username, password, captchaId, captchaAnswer } = req.body;
+
+    if (!captchaId || captchaAnswer === undefined || captchaAnswer === null) {
+      return res.status(400).json({
+        success: false,
+        message: 'Captcha is required'
+      });
+    }
+
+    const captchaResult = verifyCaptchaChallenge(captchaId, captchaAnswer);
+    if (!captchaResult.valid) {
+      return res.status(400).json({
+        success: false,
+        message: captchaResult.message
+      });
+    }
 
     // Input validation
     if (!username || !password) {
@@ -237,36 +334,6 @@ router.post('/login', authRateLimiter, async (req, res) => {
     user.clearFailedLogins();
     trackLoginAttempt(username, true);
 
-    // Check if MFA is required
-    if (user.totpSecret) {
-      // Check if device is trusted (creative MFA solution #3)
-      if (deviceId && deviceFingerprint && user.isDeviceTrusted(deviceId, deviceFingerprint)) {
-        // Skip MFA for trusted device
-        await user.save({ validateBeforeSave: false });
-        
-        await logAuditEvent({
-          eventType: 'AUTH_LOGIN_SUCCESS',
-          userId: user._id,
-          username: user.username,
-          req,
-          action: 'Login with trusted device (MFA skipped)',
-          status: 'SUCCESS'
-        });
-      } else {
-        // MFA required
-        const tempToken = generateToken(user._id, { mfaPending: true });
-        
-        return res.json({
-          success: true,
-          mfaRequired: true,
-          tempToken,
-          userId: user._id,
-          hasBackupCodes: user.hasBackupCodes(),
-          hasSecurityQuestions: user.hasSecurityQuestions()
-        });
-      }
-    }
-
     // Create session
     const sessionId = user.createSession(req.get('User-Agent'), req.ip);
     user.lastLogin = new Date();
@@ -296,125 +363,13 @@ router.post('/login', authRateLimiter, async (req, res) => {
 
 /**
  * POST /api/auth/verify-mfa
- * Verify MFA code (TOTP or backup code)
+ * MFA removed from this project
  */
-router.post('/verify-mfa', mfaRateLimiter, async (req, res) => {
-  try {
-    const { tempToken, code, useBackupCode, deviceId, deviceFingerprint, trustDevice, deviceName } = req.body;
-
-    if (!tempToken || !code) {
-      return res.status(400).json({
-        success: false,
-        message: 'Token and code are required'
-      });
-    }
-
-    // Verify temp token
-    let decoded;
-    try {
-      const jwt = require('jsonwebtoken');
-      decoded = jwt.verify(tempToken, getJwtSecret());
-    } catch (err) {
-      return res.status(401).json({
-        success: false,
-        message: SAFE_ERRORS.UNAUTHORIZED
-      });
-    }
-
-    if (!decoded.mfaPending) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid MFA verification request'
-      });
-    }
-
-    const user = await User.findById(decoded.id)
-      .select('+totpSecret +backupCodes +trustedDevices +sessions');
-    
-    if (!user) {
-      return res.status(401).json({ success: false, message: SAFE_ERRORS.UNAUTHORIZED });
-    }
-
-    let mfaValid = false;
-    let mfaMethod = 'totp';
-
-    if (useBackupCode) {
-      // Verify backup code (creative MFA solution #1)
-      const backupResult = validateBackupCode(code);
-      if (!backupResult.valid) {
-        return res.status(400).json({ success: false, message: backupResult.error });
-      }
-
-      if (user.useBackupCode(code)) {
-        mfaValid = true;
-        mfaMethod = 'backup_code';
-        
-        await logAuditEvent({
-          eventType: 'MFA_BACKUP_CODE_USED',
-          userId: user._id,
-          username: user.username,
-          req,
-          action: 'Backup code used for MFA',
-          status: 'SUCCESS',
-          riskLevel: 'MEDIUM'
-        });
-      }
-    } else {
-      // Verify TOTP code
-      const totpResult = validateTOTPCode(code);
-      if (!totpResult.valid) {
-        return res.status(400).json({ success: false, message: totpResult.error });
-      }
-
-      if (verifyTOTP(code, user.totpSecret)) {
-        mfaValid = true;
-      }
-    }
-
-    if (!mfaValid) {
-      await logAuditEvent({
-        eventType: 'MFA_VERIFICATION_FAILURE',
-        userId: user._id,
-        username: user.username,
-        req,
-        action: 'Invalid MFA code',
-        status: 'FAILURE',
-        riskLevel: 'MEDIUM'
-      });
-
-      return res.status(401).json({ success: false, message: 'Invalid verification code' });
-    }
-
-    // Trust device if requested (creative MFA solution #3)
-    if (trustDevice && deviceId && deviceFingerprint) {
-      user.addTrustedDevice(deviceId, deviceFingerprint, deviceName || 'Unknown Device');
-    }
-
-    // Create session
-    const sessionId = user.createSession(req.get('User-Agent'), req.ip);
-    user.lastLogin = new Date();
-    await user.save({ validateBeforeSave: false });
-
-    const token = generateToken(user._id, { sessionId });
-
-    await logAuditEvent({
-      eventType: 'MFA_VERIFICATION_SUCCESS',
-      userId: user._id,
-      username: user.username,
-      req,
-      action: `MFA verified via ${mfaMethod}`,
-      status: 'SUCCESS'
-    });
-
-    res.json({
-      success: true,
-      token,
-      user: user.toSafeObject()
-    });
-  } catch (error) {
-    console.error('MFA verification error:', error.message);
-    res.status(500).json({ success: false, message: SAFE_ERRORS.SERVER_ERROR });
-  }
+router.post('/verify-mfa', (req, res) => {
+  res.status(410).json({
+    success: false,
+    message: 'MFA has been removed from this application'
+  });
 });
 
 /**
@@ -465,12 +420,12 @@ router.post('/verify-email', async (req, res) => {
  */
 router.get('/me', authenticate, async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).select('+totpSecret');
+    const user = await User.findById(req.user._id);
     res.json({
       success: true,
       user: {
         ...user.toSafeObject(),
-        mfaEnabled: !!user.totpSecret
+        mfaEnabled: false
       }
     });
   } catch (error) {
@@ -483,28 +438,10 @@ router.get('/me', authenticate, async (req, res) => {
  * Start MFA setup process
  */
 router.post('/enable-mfa', authenticate, async (req, res) => {
-  try {
-    const user = await User.findById(req.user._id).select('+totpSecret');
-
-    if (user.totpSecret) {
-      return res.status(400).json({ success: false, message: 'MFA is already enabled' });
-    }
-
-    const secret = generateSecret();
-    const otpAuthUrl = generateOtpAuthUrl(user.username, secret);
-    const qrCode = await generateQRCode(otpAuthUrl);
-
-    res.json({
-      success: true,
-      secret,
-      qrCode,
-      // Only show current code in development for testing
-      currentCode: process.env.NODE_ENV === 'development' ? generateTOTP(secret) : undefined
-    });
-  } catch (error) {
-    console.error('Enable MFA error:', error.message);
-    res.status(500).json({ success: false, message: SAFE_ERRORS.SERVER_ERROR });
-  }
+  res.status(410).json({
+    success: false,
+    message: 'MFA has been removed from this application'
+  });
 });
 
 /**
@@ -512,102 +449,21 @@ router.post('/enable-mfa', authenticate, async (req, res) => {
  * Confirm MFA setup and generate backup codes
  */
 router.post('/confirm-mfa', authenticate, async (req, res) => {
-  try {
-    const { secret, code } = req.body;
-
-    if (!secret || !code) {
-      return res.status(400).json({ success: false, message: 'Secret and code are required' });
-    }
-
-    const codeResult = validateTOTPCode(code);
-    if (!codeResult.valid) {
-      return res.status(400).json({ success: false, message: codeResult.error });
-    }
-
-    if (!verifyTOTP(code, secret)) {
-      return res.status(400).json({ success: false, message: 'Invalid code. Please try again.' });
-    }
-
-    const user = await User.findById(req.user._id);
-    user.totpSecret = secret;
-    
-    // Generate backup codes (creative MFA solution #1)
-    const backupCodes = user.generateBackupCodes();
-    
-    await user.save({ validateBeforeSave: false });
-
-    await logAuditEvent({
-      eventType: 'MFA_ENABLED',
-      userId: user._id,
-      username: user.username,
-      req,
-      action: 'MFA enabled',
-      status: 'SUCCESS'
-    });
-
-    res.json({ 
-      success: true, 
-      message: 'MFA enabled successfully',
-      backupCodes // Show once - user must save these
-    });
-  } catch (error) {
-    console.error('Confirm MFA error:', error.message);
-    res.status(500).json({ success: false, message: SAFE_ERRORS.SERVER_ERROR });
-  }
+  res.status(410).json({
+    success: false,
+    message: 'MFA has been removed from this application'
+  });
 });
 
 /**
  * POST /api/auth/disable-mfa
  * Disable MFA (requires current MFA code)
  */
-router.post('/disable-mfa', authenticate, mfaRateLimiter, async (req, res) => {
-  try {
-    const { code } = req.body;
-    const user = await User.findById(req.user._id).select('+totpSecret +backupCodes');
-
-    if (!user.totpSecret) {
-      return res.status(400).json({ success: false, message: 'MFA is not enabled' });
-    }
-
-    const codeResult = validateTOTPCode(code);
-    if (!codeResult.valid) {
-      return res.status(400).json({ success: false, message: codeResult.error });
-    }
-
-    if (!verifyTOTP(code, user.totpSecret)) {
-      await logAuditEvent({
-        eventType: 'MFA_VERIFICATION_FAILURE',
-        userId: user._id,
-        username: user.username,
-        req,
-        action: 'Invalid code while disabling MFA',
-        status: 'FAILURE',
-        riskLevel: 'MEDIUM'
-      });
-
-      return res.status(400).json({ success: false, message: 'Invalid code' });
-    }
-
-    user.totpSecret = null;
-    user.backupCodes = [];
-    user.trustedDevices = [];
-    await user.save({ validateBeforeSave: false });
-
-    await logAuditEvent({
-      eventType: 'MFA_DISABLED',
-      userId: user._id,
-      username: user.username,
-      req,
-      action: 'MFA disabled',
-      status: 'SUCCESS',
-      riskLevel: 'MEDIUM'
-    });
-
-    res.json({ success: true, message: 'MFA disabled successfully' });
-  } catch (error) {
-    console.error('Disable MFA error:', error.message);
-    res.status(500).json({ success: false, message: SAFE_ERRORS.SERVER_ERROR });
-  }
+router.post('/disable-mfa', authenticate, async (req, res) => {
+  res.status(410).json({
+    success: false,
+    message: 'MFA has been removed from this application'
+  });
 });
 
 /**

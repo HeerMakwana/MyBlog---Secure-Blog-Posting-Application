@@ -1,9 +1,19 @@
 const jwt = require('jsonwebtoken');
 const functions = require('firebase-functions');
 const User = require('../models/User');
+const {AppError} = require('../utils/errors');
+const {SAFE_ERRORS} = require('../utils/safeErrors');
 
 const getJwtSecret = () => {
-  return process.env.JWT_SECRET || functions.config().jwt?.secret || 'your-default-secret-change-in-production';
+  const fnConfig = typeof functions.config === 'function' ? functions.config() : {};
+  const jwtConfig = fnConfig && fnConfig.jwt ? fnConfig.jwt : {};
+  const secret = process.env.JWT_SECRET || jwtConfig.secret;
+
+  if (!secret) {
+    throw new Error('JWT secret is not configured. Set JWT_SECRET or firebase functions config jwt.secret.');
+  }
+
+  return secret;
 };
 
 const protect = async (req, res, next) => {
@@ -15,38 +25,26 @@ const protect = async (req, res, next) => {
     }
 
     if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: 'Not authorized to access this route'
-      });
+      return next(new AppError(SAFE_ERRORS.UNAUTHORIZED, 401, 'UNAUTHORIZED'));
     }
 
     const decoded = jwt.verify(token, getJwtSecret());
 
     const user = await User.findById(decoded.id);
     if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: 'User no longer exists'
-      });
+      return next(new AppError(SAFE_ERRORS.UNAUTHORIZED, 401, 'UNAUTHORIZED'));
     }
 
     req.user = user;
     next();
   } catch (error) {
-    return res.status(401).json({
-      success: false,
-      message: 'Not authorized to access this route'
-    });
+    return next(new AppError(SAFE_ERRORS.UNAUTHORIZED, 401, 'UNAUTHORIZED'));
   }
 };
 
 const adminOnly = (req, res, next) => {
   if (!req.user.isAdmin) {
-    return res.status(403).json({
-      success: false,
-      message: 'Admin access required'
-    });
+    return next(new AppError(SAFE_ERRORS.FORBIDDEN, 403, 'FORBIDDEN'));
   }
   next();
 };

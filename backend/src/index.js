@@ -1,25 +1,60 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const connectDB = require('./config/database');
+const cookieParser = require('cookie-parser');
 
-// Security imports
+// ============= SECURITY VALIDATION =============
+// Validate environment configuration before starting
+const { validateEnvironment } = require('./config/envValidator');
+validateEnvironment();
+
+// ============= SECURITY IMPORTS =============
 const { securityHeaders, corsConfig, sanitizeRequest } = require('./middleware/securityHeaders');
 const { generalRateLimiter } = require('./middleware/rateLimiter');
+const { setCsrfToken, validateCsrfToken, getCsrfToken } = require('./middleware/csrf');
+const {
+  apiVersionMiddleware,
+  requestComplexityMiddleware,
+  responseSecurityHeaders,
+  requestFingerprinting
+} = require('./middleware/apiSecurity');
+const { DatabaseSecurityManager } = require('./config/databaseSecurity');
+const { getAuditLogger } = require('./utils/securityAuditLogger');
+const { getEncryptionService } = require('./utils/encryption');
 
-// Route imports
+// ============= DATABASE CONNECTION =============
+async function initializeDatabase() {
+  try {
+    await DatabaseSecurityManager.initializeSecureConnection();
+    console.log('✅ Secure database connection established');
+    
+    // Check database health
+    const health = await DatabaseSecurityManager.healthCheck();
+    console.log('📊 Database Health:', health.status);
+  } catch (error) {
+    console.error('❌ Failed to initialize database:', error.message);
+    process.exit(1);
+  }
+}
+
+// ============= ROUTE IMPORTS =============
 const authRoutes = require('./routes/auth');
 const postRoutes = require('./routes/posts');
 const userRoutes = require('./routes/users');
 const adminRoutes = require('./routes/admin');
 
+// ============= EXPRESS APP SETUP =============
 const app = express();
 
-// Trust proxy for accurate IP detection behind reverse proxies
-app.set('trust proxy', 1);
+// Initialize security services
+const auditLogger = getAuditLogger();
+const encryptionService = getEncryptionService();
 
-// Connect to MongoDB
-connectDB();
+// Trust proxy for accurate IP detection behind reverse proxies
+app.set('trust proxy', parseInt(process.env.TRUST_PROXY || 1));
+
+// Connect to MongoDB with security checks
+initializeDatabase();
 
 // Security Middleware Chain (Defense in Depth)
 // 1. Security Headers (CSP, HSTS, etc.)
@@ -32,11 +67,52 @@ app.use(cors(corsConfig));
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 
+// 3.5 Cookie parsing (required for CSRF)
+app.use(cookieParser());
+
 // 4. Request sanitization (XSS, prototype pollution prevention)
 app.use(sanitizeRequest);
 
-// 5. General rate limiting
+// 5. API versioning and complexity checking
+app.use(apiVersionMiddleware);
+app.use(requestComplexityMiddleware);
+
+// 6. Request fingerprinting for anomaly detection
+app.use(requestFingerprinting);
+
+// 7. Response security headers
+app.use(responseSecurityHeaders);
+
+// 8. General rate limiting
 app.use(generalRateLimiter);
+
+// 9. CSRF Protection - set token on all requests
+app.use(setCsrfToken);
+
+// CSRF token endpoint (must be before CSRF validation)
+app.get('/api/csrf-token', getCsrfToken);
+
+// 10. CSRF Validation for state-changing requests
+app.use(validateCsrfToken);
+
+// Health check (no rate limiting)
+app.get('/api/health', async (req, res) => {
+  try {
+    const dbHealth = await DatabaseSecurityManager.healthCheck();
+    res.json({
+      status: 'ok',
+      message: 'Server is running',
+      timestamp: new Date().toISOString(),
+      database: dbHealth.status
+    });
+  } catch (error) {
+    res.status(503).json({
+      status: 'unhealthy',
+      message: 'Service unavailable',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -44,9 +120,15 @@ app.use('/api/posts', postRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/admin', adminRoutes);
 
-// Health check (no rate limiting)
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', message: 'Server is running', timestamp: new Date().toISOString() });
+// Security audit endpoint (admin only)
+app.get('/api/admin/security/logs', (req, res) => {
+  // TODO: Implement authorization check
+  try {
+    const logs = auditLogger.readLogsForDate(new Date().toISOString().split('T')[0]);
+    res.json({ success: true, logs, count: logs.length });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to retrieve logs' });
+  }
 });
 
 // 404 handler - fail closed

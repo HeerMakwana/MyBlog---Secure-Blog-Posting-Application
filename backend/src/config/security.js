@@ -102,6 +102,16 @@ module.exports = {
     }
   },
 
+  // CSRF Protection
+  csrf: {
+    enabled: true,
+    tokenLength: 32,
+    cookieName: 'XSRF-TOKEN',
+    headerName: 'X-XSRF-TOKEN',
+    cookieMaxAge: 24 * 60 * 60 * 1000, // 24 hours
+    sameSite: 'strict'
+  },
+
   // Audit Logging
   audit: {
     enabled: true,
