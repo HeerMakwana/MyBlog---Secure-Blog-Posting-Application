@@ -18,6 +18,7 @@ const {
   responseSecurityHeaders,
   requestFingerprinting
 } = require('./middleware/apiSecurity');
+const { authenticate, adminOnly } = require('./middleware/rbac');
 const { DatabaseSecurityManager } = require('./config/databaseSecurity');
 const { getAuditLogger } = require('./utils/securityAuditLogger');
 const { getEncryptionService } = require('./utils/encryption');
@@ -121,8 +122,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/admin', adminRoutes);
 
 // Security audit endpoint (admin only)
-app.get('/api/admin/security/logs', (req, res) => {
-  // TODO: Implement authorization check
+app.get('/api/admin/security/logs', authenticate, adminOnly, (req, res) => {
   try {
     const logs = auditLogger.readLogsForDate(new Date().toISOString().split('T')[0]);
     res.json({ success: true, logs, count: logs.length });

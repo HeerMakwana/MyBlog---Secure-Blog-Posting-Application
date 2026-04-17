@@ -24,8 +24,24 @@ const checks = [
   },
 ];
 
+async function assertServerReachable() {
+  try {
+    const response = await fetch(`${BASE_URL}/health`);
+    if (!response.ok) {
+      throw new Error(`Health check failed with status ${response.status}`);
+    }
+  } catch (error) {
+    console.error("Security leakage checks require a running API server.");
+    console.error(`Tried: ${BASE_URL}/health`);
+    console.error(`Reason: ${error.message}`);
+    process.exit(1);
+  }
+}
+
 async function run() {
   let failures = 0;
+
+  await assertServerReachable();
 
   for (const check of checks) {
     try {

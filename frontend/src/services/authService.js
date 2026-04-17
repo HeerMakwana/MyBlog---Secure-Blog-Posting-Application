@@ -12,7 +12,7 @@ import {
   doc, 
   setDoc, 
   getDoc, 
-  updateDocenic,
+  updateDoc,
   serverTimestamp,
   collection,
   query,

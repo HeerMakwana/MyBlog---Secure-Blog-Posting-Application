@@ -9,7 +9,8 @@
 
 const STORAGE_CONFIG = {
   // Use sessionStorage instead of localStorage for auth tokens (cleared on browser close)
-  JWT_TOKEN_KEY: 'auth_token',
+  JWT_TOKEN_KEY: 'token',
+  LEGACY_JWT_TOKEN_KEY: 'auth_token',
   STORAGE_TYPE: 'sessionStorage', // or 'localStorage' - sessionStorage is more secure
   
   // Never store sensitive data that should be session-only
@@ -26,10 +27,37 @@ const STORAGE_CONFIG = {
  * Secure Storage Service
  */
 class SecureStorage {
-  static setToken(token) {
-    const storage = STORAGE_CONFIG.STORAGE_TYPE === 'sessionStorage'
+  static getActiveStorage() {
+    return STORAGE_CONFIG.STORAGE_TYPE === 'sessionStorage'
       ? sessionStorage
       : localStorage;
+  }
+
+  static migrateLegacyTokenIfNeeded() {
+    const storage = this.getActiveStorage();
+    const activeToken = storage.getItem(STORAGE_CONFIG.JWT_TOKEN_KEY);
+    if (activeToken) {
+      return activeToken;
+    }
+
+    // Backward compatibility for old key names and storage location.
+    const legacyToken =
+      localStorage.getItem('token') ||
+      localStorage.getItem(STORAGE_CONFIG.LEGACY_JWT_TOKEN_KEY) ||
+      sessionStorage.getItem(STORAGE_CONFIG.LEGACY_JWT_TOKEN_KEY);
+
+    if (legacyToken) {
+      storage.setItem(STORAGE_CONFIG.JWT_TOKEN_KEY, legacyToken);
+      localStorage.removeItem(STORAGE_CONFIG.LEGACY_JWT_TOKEN_KEY);
+      sessionStorage.removeItem(STORAGE_CONFIG.LEGACY_JWT_TOKEN_KEY);
+      localStorage.removeItem('token');
+    }
+
+    return legacyToken;
+  }
+
+  static setToken(token) {
+    const storage = this.getActiveStorage();
     
     try {
       storage.setItem(STORAGE_CONFIG.JWT_TOKEN_KEY, token);
@@ -39,16 +67,16 @@ class SecureStorage {
   }
 
   static getToken() {
-    const storage = STORAGE_CONFIG.STORAGE_TYPE === 'sessionStorage'
-      ? sessionStorage
-      : localStorage;
-    
-    return storage.getItem(STORAGE_CONFIG.JWT_TOKEN_KEY);
+    const storage = this.getActiveStorage();
+    return storage.getItem(STORAGE_CONFIG.JWT_TOKEN_KEY) || this.migrateLegacyTokenIfNeeded();
   }
 
   static removeToken() {
     sessionStorage.removeItem(STORAGE_CONFIG.JWT_TOKEN_KEY);
     localStorage.removeItem(STORAGE_CONFIG.JWT_TOKEN_KEY);
+    sessionStorage.removeItem(STORAGE_CONFIG.LEGACY_JWT_TOKEN_KEY);
+    localStorage.removeItem(STORAGE_CONFIG.LEGACY_JWT_TOKEN_KEY);
+    localStorage.removeItem('token');
   }
 
   static clear() {

@@ -1,8 +1,14 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
+const JWT_ALGORITHM = 'HS256';
+
 const getJwtSecret = () => {
-  return process.env.JWT_SECRET || 'your-default-secret-change-in-production';
+  const secret = process.env.JWT_SECRET;
+  if (!secret || secret.length < 64) {
+    throw new Error('JWT_SECRET must be configured and at least 64 characters');
+  }
+  return secret;
 };
 
 const protect = async (req, res, next) => {
@@ -20,7 +26,11 @@ const protect = async (req, res, next) => {
       });
     }
 
-    const decoded = jwt.verify(token, getJwtSecret());
+    const decoded = jwt.verify(token, getJwtSecret(), {
+      algorithms: [JWT_ALGORITHM],
+      issuer: process.env.JWT_ISSUER || 'myblog-api',
+      audience: process.env.JWT_AUDIENCE || 'myblog-client'
+    });
 
     const user = await User.findById(decoded.id);
     if (!user) {
@@ -54,7 +64,12 @@ const generateToken = (userId, mfaPending = false) => {
   return jwt.sign(
     { id: userId, mfaPending },
     getJwtSecret(),
-    { expiresIn: '7d' }
+    {
+      expiresIn: process.env.JWT_EXPIRES_IN || '1h',
+      algorithm: JWT_ALGORITHM,
+      issuer: process.env.JWT_ISSUER || 'myblog-api',
+      audience: process.env.JWT_AUDIENCE || 'myblog-client'
+    }
   );
 };
 

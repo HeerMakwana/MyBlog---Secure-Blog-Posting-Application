@@ -62,6 +62,18 @@ class EnvironmentValidator {
   }
 
   /**
+   * Validate environment variable value is in allowed set
+   */
+  validateOneOf(key, allowedValues) {
+    const value = process.env[key];
+    if (value && !allowedValues.includes(value.toLowerCase())) {
+      this.errors.push(`❌ ${key} must be one of: ${allowedValues.join(', ')}`);
+      return false;
+    }
+    return true;
+  }
+
+  /**
    * Validate numeric environment variable
    */
   validateNumeric(key, minValue, maxValue) {
@@ -139,13 +151,14 @@ class EnvironmentValidator {
     this.validateUrl('MONGODB_URI');
 
     // JWT Secrets - CRITICAL
+    this.validateRequired('JWT_SECRET', 'JWT secret required');
+    this.validateMinLength(
+      'JWT_SECRET',
+      process.env.NODE_ENV === 'production' ? 64 : 32,
+      'Generate with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"'
+    );
+
     if (process.env.NODE_ENV === 'production') {
-      this.validateRequired('JWT_SECRET', 'JWT secret required');
-      this.validateMinLength(
-        'JWT_SECRET',
-        64,
-        'Generate with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"'
-      );
 
       this.validateRequired('SESSION_SECRET', 'Session secret required');
       this.validateMinLength(
@@ -178,7 +191,7 @@ class EnvironmentValidator {
     // Cookie Security
     this.validateBoolean('COOKIE_SECURE');
     this.validateBoolean('COOKIE_HTTP_ONLY');
-    this.validateBoolean('COOKIE_SAME_SITE');
+    this.validateOneOf('COOKIE_SAME_SITE', ['strict', 'lax', 'none']);
 
     // CORS Origins
     this.validateRequired('ALLOWED_ORIGINS', 'At least one allowed origin required');

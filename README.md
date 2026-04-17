@@ -46,6 +46,8 @@ Minimum values to run local backend:
 - PORT=5000
 - MONGODB_URI=your MongoDB URI
 - JWT_SECRET=64+ char random string
+- JWT_ISSUER=myblog-api
+- JWT_AUDIENCE=myblog-client
 - SESSION_SECRET=64+ char random string
 - CSRF_SECRET=32+ char random string
 - ENCRYPTION_KEY=64 hex chars
@@ -76,6 +78,8 @@ Create functions/.env (template provided in functions/.env.example) with:
 - NODE_ENV=production
 - MONGODB_URI=your MongoDB URI
 - JWT_SECRET=64+ char random string
+- JWT_ISSUER=myblog-api
+- JWT_AUDIENCE=myblog-client
 - ALLOWED_ORIGINS=https://your-frontend-domain
 
 If you use multiple Firebase projects, create per-project files:
@@ -113,6 +117,11 @@ In functions/:
 - npm run lint
 - npm run test:security
 - npm run test:password-security
+
+Note: `npm run test:security` in `functions/` expects a running API server.
+Use emulator default URL or set custom base URL:
+
+- SECURITY_TEST_BASE_URL=http://127.0.0.1:5001 npm run test:security
 
 In backend/ (optional but recommended):
 

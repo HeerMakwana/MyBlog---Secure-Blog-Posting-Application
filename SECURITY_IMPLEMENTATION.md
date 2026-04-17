@@ -266,7 +266,7 @@ After 5 failed login attempts within 15 minutes:
   riskLevel: 'HIGH',
   userId: user._id,
   failedAttempts: 5,
-  lockedUntil: '2024-04-11T14:30:00Z'
+  lockedUntil: '2026/04/17T14:30:00Z'
 }
 ```
 
@@ -429,15 +429,15 @@ Logs are written to `backend/logs/`:
 
 ```
 logs/
-├── audit-2024-04-11.log       # Daily audit log
-├── audit-2024-04-10.log
+├── audit-2026-04-17.log       # Daily audit log
+├── audit-2026-04-17-archive.log
 └── critical-events.log        # Critical-level events only
 ```
 
 Each line is a JSON object:
 ```json
 {
-  "timestamp": "2024-04-11T12:00:00Z",
+  "timestamp": "2026/04/17T12:00:00Z",
   "eventType": "LOGIN_SUCCESS",
   "riskLevel": "LOW",
   "userId": "507f1f77bcf86cd799439011",
@@ -816,13 +816,64 @@ To achieve security certifications:
 - **Mozilla Web Security**: https://infosec.mozilla.org/
 - **Node.js Security Best Practices**: https://nodejs.org/en/docs/guides/security/
 
+
 ---
 
-## Document Versioning
+## Consolidated Summary
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.0 | 2024-04-11 | Initial comprehensive security guide |
+This section merges the removed summary, quick reference, and report content into this single canonical guide.
 
-**Last Updated**: 2024-04-11  
-**Next Review**: 2024-07-11
+### Executive Summary
+
+- Defense-in-depth security is implemented across environment validation, authentication, authorization, request validation, encryption, audit logging, and frontend token handling.
+- The tester-facing API path is the Firebase Functions app in `functions/`, while `backend/` remains the local standalone API.
+- The application should fail closed when secrets, CORS, or origin settings are misconfigured.
+
+### Quick Start
+
+1. Copy `backend/.env.example` to `backend/.env` and `functions/.env.example` to `functions/.env` as needed.
+2. Generate strong secrets for `JWT_SECRET`, `SESSION_SECRET`, `CSRF_SECRET`, and `ENCRYPTION_KEY`.
+3. Set `ALLOWED_ORIGINS` to exact production or local origins only.
+4. Run `npm run test:security` before sharing to testers.
+5. Start the local stack or emulator after validation.
+
+### Core Security Features
+
+- Authentication: CAPTCHA, JWT, bcrypt hashing, rate limiting, account lockout, email verification.
+- Authorization: RBAC with admin-only controls on sensitive endpoints.
+- Data protection: AES-256-GCM at rest, HTTPS/TLS in transit, secure cookies, CSRF protection.
+- Monitoring: Audit logging, critical event logging, request fingerprinting, retention cleanup.
+- Input validation: Request size limits, prototype pollution prevention, XSS and injection mitigation.
+
+### Operational Checklist
+
+- Use 64+ character random secrets for JWT and session signing.
+- Keep `COOKIE_SECURE=true` in production.
+- Never allow wildcard CORS origins in production.
+- Confirm admin-only endpoints are protected by authentication and role checks.
+- Verify token handling in the frontend uses secure storage and supports legacy migration when needed.
+
+### Testing and Handoff
+
+- `npm run test:security` is the primary pre-share validation step.
+- `npm audit` should be reviewed before packaging a tester build.
+- Functions security leakage checks require a running API server or emulator.
+- For Firebase Functions tests, set `SECURITY_TEST_BASE_URL` when the default host differs.
+
+### Key Files
+
+- `backend/src/config/envValidator.js`
+- `backend/src/middleware/auth.js`
+- `backend/src/index.js`
+- `functions/index.js`
+- `functions/middleware/auth.js`
+- `frontend/src/config/securityConfig.js`
+- `frontend/src/services/api.js`
+- `frontend/src/context/AuthContext.js`
+
+### Report Highlights
+
+- RBAC is least-privilege by design, with admin capabilities isolated from standard user flows.
+- Fail-safe defaults are enforced at the config and middleware layers.
+- Security logs and audit trails are intended for incident review and compliance evidence.
+- The current deployment guidance assumes HTTPS behind a reverse proxy or Firebase Hosting.

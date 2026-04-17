@@ -6,6 +6,7 @@ const User = require("../models/User");
 const {protect} = require("../middleware/auth");
 const {AppError, asyncHandler} = require("../utils/errors");
 const {SAFE_ERRORS} = require("../utils/safeErrors");
+const {validatePasswordPolicy} = require("../utils/passwordPolicy");
 
 router.put("/profile", protect, asyncHandler(async (req, res) => {
   const {username, email, currentPassword, newPassword} = req.body;
@@ -28,8 +29,13 @@ router.put("/profile", protect, asyncHandler(async (req, res) => {
   const updateData = {username, email};
 
   if (newPassword) {
-    if (!currentPassword || newPassword.length < 8) {
+    if (!currentPassword) {
       throw new AppError(SAFE_ERRORS.VALIDATION_FAILED, 400, "VALIDATION_ERROR");
+    }
+
+    const passwordPolicyResult = validatePasswordPolicy(newPassword);
+    if (!passwordPolicyResult.valid) {
+      throw new AppError(SAFE_ERRORS.VALIDATION_FAILED, 400, "WEAK_PASSWORD");
     }
 
     const user = await User.findById(req.user._id).select("+password");

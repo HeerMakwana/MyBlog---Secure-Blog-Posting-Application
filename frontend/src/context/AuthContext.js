@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import api, { initCsrfToken } from '../services/api';
+import { SecureStorage } from '../config/securityConfig';
 
 const AuthContext = createContext(null);
 
@@ -27,13 +28,13 @@ export const AuthProvider = ({ children }) => {
   };
 
   const checkAuth = async () => {
-    const token = localStorage.getItem('token');
+    const token = SecureStorage.getToken();
     if (token) {
       try {
         const response = await api.get('/auth/me');
         setUser(response.data.user);
       } catch (error) {
-        localStorage.removeItem('token');
+        SecureStorage.removeToken();
       }
     }
     setLoading(false);
@@ -47,7 +48,7 @@ export const AuthProvider = ({ children }) => {
       captchaAnswer
     });
 
-    localStorage.setItem('token', response.data.token);
+    SecureStorage.setToken(response.data.token);
     setUser(response.data.user);
     return { success: true };
   };
@@ -60,13 +61,13 @@ export const AuthProvider = ({ children }) => {
       captchaId,
       captchaAnswer
     });
-    localStorage.setItem('token', response.data.token);
+    SecureStorage.setToken(response.data.token);
     setUser(response.data.user);
     return { success: true };
   };
 
   const logout = () => {
-    localStorage.removeItem('token');
+    SecureStorage.removeToken();
     setUser(null);
   };
 
