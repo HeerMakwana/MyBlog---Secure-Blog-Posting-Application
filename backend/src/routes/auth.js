@@ -5,7 +5,6 @@
 
 const express = require('express');
 const router = express.Router();
-const crypto = require('crypto');
 const User = require('../models/User');
 const { authenticate, generateToken, getJwtSecret } = require('../middleware/rbac');
 const { authRateLimiter, trackLoginAttempt, isAccountLocked } = require('../middleware/rateLimiter');
@@ -19,6 +18,15 @@ const {
 const { ROLES } = require('../config/roles');
 const securityConfig = require('../config/security');
 
+const INJECTION_PATTERNS = [
+  /('|\"|;|--|\/\*|\*\/|\bOR\b|\bAND\b|\bUNION\b|\bSELECT\b|\bDROP\b|\bINSERT\b|\bUPDATE\b|\bDELETE\b)/i,
+  /\b1\s*=\s*1\b/i
+];
+
+const containsInjectionPattern = (value) => (
+  typeof value === 'string' && INJECTION_PATTERNS.some((pattern) => pattern.test(value))
+);
+
 // Security questions list
 const SECURITY_QUESTIONS = [
   { id: 1, question: "What was the name of your first pet?" },
@@ -31,96 +39,18 @@ const SECURITY_QUESTIONS = [
   { id: 8, question: "What street did you grow up on?" }
 ];
 
-const captchaStore = new Map();
-const CAPTCHA_TTL_MS = 5 * 60 * 1000;
-const CAPTCHA_MAX_ATTEMPTS = 3;
-
-const cleanupCaptchaStore = () => {
-  const now = Date.now();
-  for (const [id, challenge] of captchaStore.entries()) {
-    if (challenge.expiresAt <= now) {
-      captchaStore.delete(id);
-    }
-  }
-};
-
-setInterval(cleanupCaptchaStore, 60 * 1000);
-
-const createCaptchaChallenge = () => {
-  const a = Math.floor(Math.random() * 9) + 1;
-  const b = Math.floor(Math.random() * 9) + 1;
-  const operator = Math.random() < 0.5 ? '+' : '-';
-
-  const answer = operator === '+' ? a + b : a - b;
-  const captchaId = crypto.randomBytes(16).toString('hex');
-
-  captchaStore.set(captchaId, {
-    answer,
-    attempts: 0,
-    expiresAt: Date.now() + CAPTCHA_TTL_MS
-  });
-
-  return {
-    captchaId,
-    question: `${a} ${operator} ${b} = ?`
-  };
-};
-
-const verifyCaptchaChallenge = (captchaId, captchaAnswer) => {
-  const challenge = captchaStore.get(captchaId);
-  if (!challenge) {
-    return { valid: false, message: 'Captcha expired. Please try again.' };
-  }
-
-  if (challenge.expiresAt <= Date.now()) {
-    captchaStore.delete(captchaId);
-    return { valid: false, message: 'Captcha expired. Please try again.' };
-  }
-
-  challenge.attempts += 1;
-
-  const numericAnswer = Number(captchaAnswer);
-  const isValid = Number.isFinite(numericAnswer) &&
-    numericAnswer === challenge.answer;
-
-  if (isValid) {
-    captchaStore.delete(captchaId);
-    return { valid: true };
-  }
-
-  if (challenge.attempts >= CAPTCHA_MAX_ATTEMPTS) {
-    captchaStore.delete(captchaId);
-    return { valid: false, message: 'Captcha expired. Please try again.' };
-  }
-
-  return { valid: false, message: 'Incorrect captcha answer' };
-};
-
-router.get('/captcha', (req, res) => {
-  const challenge = createCaptchaChallenge();
-  res.json({ success: true, ...challenge });
-});
-
 /**
  * POST /api/auth/register
  * Register a new user with email verification
  */
 router.post('/register', authRateLimiter, async (req, res) => {
   try {
-    const { username, email, password, captchaId, captchaAnswer } = req.body;
+    const { username, email, password } = req.body;
 
-    if (!captchaId || captchaAnswer === undefined || captchaAnswer === null) {
+    if (containsInjectionPattern(username) || containsInjectionPattern(email)) {
       return res.status(400).json({
         success: false,
-        message: 'Captcha is required'
-      });
-    }
-
-    const captchaResult = verifyCaptchaChallenge(captchaId, captchaAnswer);
-    if (!captchaResult.valid) {
-      return res.status(400).json({
-        success: false,
-        message: captchaResult.message
+        message: 'Invalid input detected'
       });
     }
 
@@ -207,22 +137,7 @@ router.post('/register', authRateLimiter, async (req, res) => {
  */
 router.post('/login', authRateLimiter, async (req, res) => {
   try {
-    const { username, password, captchaId, captchaAnswer } = req.body;
-
-    if (!captchaId || captchaAnswer === undefined || captchaAnswer === null) {
-      return res.status(400).json({
-        success: false,
-        message: 'Captcha is required'
-      });
-    }
-
-    const captchaResult = verifyCaptchaChallenge(captchaId, captchaAnswer);
-    if (!captchaResult.valid) {
-      return res.status(400).json({
-        success: false,
-        message: captchaResult.message
-      });
-    }
+    const { username, password } = req.body;
 
     // Input validation
     if (!username || !password) {

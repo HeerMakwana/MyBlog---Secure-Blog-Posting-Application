@@ -1,30 +1,23 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import api from '../services/api';
+
+const INJECTION_PATTERNS = [
+  /('|")|;|--|\/\*|\*\/|\bOR\b|\bAND\b|\bUNION\b|\bSELECT\b|\bDROP\b|\bINSERT\b|\bUPDATE\b|\bDELETE\b/i,
+  /\b1\s*=\s*1\b/i
+];
+
+const containsInjectionPattern = (value) =>
+  INJECTION_PATTERNS.some((pattern) => pattern.test(value));
 
 const Register = () => {
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [captchaId, setCaptchaId] = useState('');
-  const [captchaQuestion, setCaptchaQuestion] = useState('');
-  const [captchaAnswer, setCaptchaAnswer] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { register, isAuthenticated } = useAuth();
   const navigate = useNavigate();
-
-  const loadCaptcha = React.useCallback(async () => {
-    try {
-      const response = await api.get('/auth/captcha');
-      setCaptchaId(response.data.captchaId);
-      setCaptchaQuestion(response.data.question);
-      setCaptchaAnswer('');
-    } catch (err) {
-      setError('Failed to load captcha. Please refresh the page.');
-    }
-  }, []);
 
   // Redirect if already logged in
   React.useEffect(() => {
@@ -33,14 +26,12 @@ const Register = () => {
     }
   }, [isAuthenticated, navigate]);
 
-  React.useEffect(() => {
-    loadCaptcha();
-  }, [loadCaptcha]);
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
+
+    const normalizedEmail = email.trim();
 
     // Basic validation
     if (username.length < 3 || username.length > 30) {
@@ -55,24 +46,29 @@ const Register = () => {
       return;
     }
 
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setError('Please enter a valid email address');
+      setLoading(false);
+      return;
+    }
+
+    if (containsInjectionPattern(username) || containsInjectionPattern(normalizedEmail)) {
+      setError('Invalid input detected');
+      setLoading(false);
+      return;
+    }
+
     if (password.length < 8) {
       setError('Password must be at least 8 characters');
       setLoading(false);
       return;
     }
 
-    if (!captchaId || captchaAnswer.trim() === '') {
-      setError('Please solve the captcha');
-      setLoading(false);
-      return;
-    }
-
     try {
-      await register(username, email, password, captchaId, captchaAnswer.trim());
+      await register(username, normalizedEmail, password);
       navigate('/dashboard');
     } catch (err) {
       setError(err.response?.data?.message || 'Registration failed');
-      await loadCaptcha();
     } finally {
       setLoading(false);
     }
@@ -121,20 +117,6 @@ const Register = () => {
             minLength="8"
             autoComplete="new-password"
           />
-        </div>
-
-        <div className="form-group">
-          <label htmlFor="captcha">Captcha: {captchaQuestion || 'Loading...'}</label>
-          <input
-            type="text"
-            id="captcha"
-            value={captchaAnswer}
-            onChange={(e) => setCaptchaAnswer(e.target.value)}
-            required
-          />
-          <button type="button" className="btn btn-secondary mt-1" onClick={loadCaptcha}>
-            New Captcha
-          </button>
         </div>
 
         <button type="submit" className="btn" disabled={loading}>

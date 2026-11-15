@@ -40,12 +40,10 @@ export const AuthProvider = ({ children }) => {
     setLoading(false);
   };
 
-  const login = async (username, password, captchaId, captchaAnswer) => {
+  const login = async (username, password) => {
     const response = await api.post('/auth/login', {
       username,
-      password,
-      captchaId,
-      captchaAnswer
+      password
     });
 
     SecureStorage.setToken(response.data.token);
@@ -53,13 +51,11 @@ export const AuthProvider = ({ children }) => {
     return { success: true };
   };
 
-  const register = async (username, email, password, captchaId, captchaAnswer) => {
+  const register = async (username, email, password) => {
     const response = await api.post('/auth/register', {
       username,
       email,
-      password,
-      captchaId,
-      captchaAnswer
+      password
     });
     SecureStorage.setToken(response.data.token);
     setUser(response.data.user);

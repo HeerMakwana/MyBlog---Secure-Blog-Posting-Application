@@ -52,6 +52,7 @@ Minimum values to run local backend:
 - CSRF_SECRET=32+ char random string
 - ENCRYPTION_KEY=64 hex chars
 - ALLOWED_ORIGINS=http://localhost:3000
+- ENABLE_CAPTCHA_BYPASS=false
 - ADMIN_EMAIL=valid email (if ADMIN_USERNAME is set)
 - ADMIN_PASSWORD=12+ chars (if ADMIN_USERNAME is set)
 
@@ -66,6 +67,7 @@ Copy frontend/.env.example to frontend/.env.
 For local backend development:
 
 - REACT_APP_API_URL=http://localhost:5000/api
+- REACT_APP_CAPTCHA_BYPASS=false
 
 For Firebase Hosting + Functions deployment:
 
@@ -168,6 +170,17 @@ After deployment, verify:
 
 - Security validator fails local backend startup:
   Ensure backend/.env includes valid ADMIN_EMAIL and strong secrets.
+
+## Screenshot Mode (Local Dev Only)
+
+If CAPTCHA blocks QA evidence screenshots in local development, you can temporarily bypass CAPTCHA:
+
+- In backend/.env: ENABLE_CAPTCHA_BYPASS=true
+- In frontend/.env: REACT_APP_CAPTCHA_BYPASS=true
+
+Then restart both dev servers.
+
+Security note: this bypass is automatically disabled in production because it only works when NODE_ENV is not production.
 
 ## Security Notes
 
